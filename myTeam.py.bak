@@ -1,0 +1,399 @@
+# myTeam.py
+# ---------
+# Licensing Information:  You are free to use or extend these projects for
+# educational purposes provided that (1) you do not distribute or publish
+# solutions, (2) you retain this notice, and (3) you provide clear
+# attribution to UC Berkeley, including a link to http://ai.berkeley.edu.
+#
+# Attribution Information: The Pacman AI projects were developed at UC Berkeley.
+# The core projects and autograders were primarily created by John DeNero
+# (denero@cs.berkeley.edu) and Dan Klein (klein@cs.berkeley.edu).
+# Student side autograding was added by Brad Miller, Nick Hay, and
+# Pieter Abbeel (pabbeel@cs.berkeley.edu).
+
+import pickle
+import random
+import sys
+import time
+
+import game
+import util
+from captureAgents import CaptureAgent
+from game import Directions, Actions
+from util import nearestPoint
+
+
+#################
+# Team creation #
+#################
+
+def createTeam(firstIndex, secondIndex, isRed, first='OffensiveAgent', second='DefensiveAgent'):
+    """
+    This function should return a list of two agents that will form the
+    team, initialized using firstIndex and secondIndex as their agent
+    index numbers.  isRed is True if the red team is being created, and
+    will be False if the blue team is being created.
+
+    As a potentially helpful development aid, this function can take
+    additional string-valued keyword arguments ("first" and "second" are
+    such arguments in the case of this function), which will come from
+    the --redOpts and --blueOpts command-line arguments to capture.py.
+    For the nightly contest, however, your team will be created without
+    any extra arguments, so you should make sure that the default
+    behavior is what you want for the nightly contest.
+    """
+
+    # The following line is an example only; feel free to change it.
+    return [eval(first)(firstIndex), eval(second)(secondIndex)]
+
+
+##########
+# Agents #
+##########
+
+class BaseAgent(CaptureAgent):
+
+    def registerInitialState(self, state):
+        """
+        This method handles the initial setup of the
+        agent to populate useful fields (such as what team
+        we're on).
+
+        A distanceCalculator instance caches the maze distances
+        between each pair of positions, so your agents can use:
+        self.distancer.getDistance(p1, p2)
+
+        IMPORTANT: This method may run for at most 15 seconds.
+        """
+        CaptureAgent.registerInitialState(self, state)
+
+        # Width of the board
+        self.width = state.data.layout.width
+
+        # Height of the board
+        self.height = state.data.layout.height
+
+        # Get the indices of the baddies
+        self.opponents = self.getOpponents(state)
+
+        # Get the legal positions for agents to be in
+        self.legal_positions = set(state.getWalls().asList(False))
+
+        # Identify the carry limit
+        self.carry_limit = (len(self.getFood(state).asList()) - 2) // 5
+
+        # sys.exit(0)
+
+    def distance(self, a, b):
+        return self.distancer.getDistance(a, b)
+
+    def chooseAction(self, gameState):
+
+        def expectimax(node, depth, a, b, agent):
+            """
+            Implementation of the expectimax algorithm.
+            """
+            if depth == 0 or node.isOver():
+                return self.evaluate(node), Directions.STOP
+
+            actions = node.getLegalActions(agent)
+            next_agent = (agent + 1) % (len(self.opponents) + 1)
+
+            if agent == self.index:
+                # We are at play
+                # We want to find the action that maximizes our score
+                best_value, best_action = float('-inf'), None
+                actions.remove(Directions.STOP)
+                random.shuffle(actions)
+                for action in actions:
+                    successor = node.generateSuccessor(agent, action)
+                    exp_value, _ = expectimax(successor, depth - 1, a, b, next_agent)
+                    a = max(a, exp_value)
+                    if exp_value > best_value:  # apply hysteresis
+                        best_value = exp_value
+                        best_action = action
+                    if a >= b:
+                        break
+                return best_value, best_action
+            else:
+                # Baddie is at play
+                # Since we don't know the opponents strategy, we use
+                # probability to chance it for us
+                best_value, best_action = float('inf'), None
+                random.shuffle(actions)
+                for action in actions:
+                    successor = node.generateSuccessor(agent, action)
+                    exp_value, _ = expectimax(successor, depth - 1, a, b, next_agent)
+                    b = min(b, exp_value)
+                    if exp_value < best_value:  # apply hysteresis
+                        best_value = exp_value
+                        best_action = action
+                    if b >= a:
+                        break
+                return best_value, best_action
+
+                prob = 1.0 / len(actions)
+                value = 0.0
+                for action in actions:
+                    successor = node.generateSuccessor(agent, action)
+                    exp_value, _ = expectimax(successor, depth, a, b, next_agent)
+                    value += prob * exp_value
+                return value, Directions.STOP
+
+        _, action = expectimax(gameState, 2, float('-inf'), float('inf'), self.index)
+        return action
+
+
+class OffensiveAgent(BaseAgent):
+    # TODO: detect if I can get cornered, and if I can then check how far the
+    # closest opponent is
+
+    def registerInitialState(self, gameState):
+        BaseAgent.registerInitialState(self, gameState)
+
+        self.epsilon = 0.1
+        self.alpha = 0.2
+        self.discountFactor = 0.8
+        self.weights = {
+            'closest-food': -2.2558226236802597,
+            'bias': 1.0856704846852672,
+            'closest-ghost': -0.18419418670562,
+            'score': -0.027287497346388308,
+            'eats-food': 9.970429654829946,
+        }
+        # try:
+        #     with open('weights.pkl', 'r') as f:
+        #         self.weights = pickle.load(f)
+        # except IOError:
+        #     pass
+
+    def chooseAction(self, gameState):
+		# Pick Action
+		legalActions = gameState.getLegalActions(self.index)
+		action = None
+
+		if len(legalActions) != 0:
+			prob = util.flipCoin(self.epsilon)
+			if prob:
+				action = random.choice(legalActions)
+			else:
+				action = self.getPolicy(gameState)
+		return action
+
+    def getPolicy(self, gameState):
+		legalActions = gameState.getLegalActions(self.index)
+		legalActions.remove(Directions.STOP)
+		if len(legalActions) == 0:
+		    return None
+		else:
+    		values = []
+			for action in legalActions:
+				self.updateWeights(gameState, action)
+				values.append((self.getQValue(gameState, action), action))
+	    	return max(values)[1]
+
+    def getValue(self, gameState):
+        legalActions = gameState.getLegalActions(self.index)
+        try:
+            return max(self.getQValue(gameState, action) for action in legalActions)
+        except ValueError:
+            return 0.0
+
+    def getQValue(self, gameState):
+        if gameState.getAgentState(self.index).numCarrying > 4:
+            myPos = gameState.getAgentPosition(self.index)
+            distanceFromStart = min(
+                self.distancer.getDistance(myPos, (self.width / 2, i))
+                for i in range(self.height)
+                if (self.width / 2, i) in self.legalPositions
+            )
+            ghostDistances = []
+            for opponent in self.opponents:
+                if not gameState.getAgentState(opponent).isPacman:
+                    enemyPos = gameState.getAgentPosition(opponent)
+                    if enemyPos != None:
+                        ghostDistances.append(self.distance(myPos, enemyPos))
+            minGhostDistances = min(ghostDistances)
+
+            return 500 * minGhostDistances - 2 * distanceFromStart
+
+        features = self.getFeatures(gameState)
+        return features * self.weights
+
+    def getFeatures(self, gameState, action):
+        # Extract the grid of food and wall locations
+        food = gameState.getBlueFood()
+        walls = gameState.getWalls()
+
+        # Get ghost locations and states if observable
+        ghosts = []
+        opAgents = CaptureAgent.getOpponents(self, gameState)
+        if opAgents:
+            for opponent in opAgents:
+                opPos = gameState.getAgentPosition(opponent)
+                opIsPacman = gameState.getAgentState(opponent).isPacman
+                if opPos and not opIsPacman:
+                    ghosts.append(opPos)
+
+        # Initialize features
+        features = util.Counter()
+        successor = self.getSuccessor(gameState, action)
+
+        # Successor Score
+        features['successorScore'] = self.getScore(successor)
+
+        # Bias
+        features['bias'] = 1.0
+
+        # Compute the location of pacman
+        x, y = myPos = gameState.getAgentPosition(self.index)
+        dx, dy = Actions.directionToVector(action)
+        next_x, next_y = int(x + dx), int(y + dy)
+
+        # Number of Ghosts 1-step away
+        ghostDistances = []
+        for opponent in self.opponents:
+            if not gameState.getAgentState(opponent).isPacman:
+                enemyPos = gameState.getAgentPosition(opponent)
+                if enemyPos != None:
+                    ghostDistances.append(self.distance(myPos, enemyPos))
+        features['closest-ghost'] = min(ghostDistances)
+
+        # If there is no danger of ghosts then add the food feature
+        if features['closest-ghost'] > 1 and food[next_x][next_y]:
+            features['eats-food'] = 1.0
+
+        # Closest food
+        dist = self.closestFood((next_x, next_y), food, walls)
+        if dist is not None:
+            # Must be < 1 to converge
+            features['closest-food'] = float(dist) / (walls.width * walls.height)
+
+        # Normalize and return
+        features.divideAll(10.0)
+        return features
+
+    def closestFood(self, pos, food, walls):
+        fringe = [(pos[0], pos[1], 0)]
+        expanded = set()
+        while fringe:
+            pos_x, pos_y, dist = fringe.pop(0)
+            if (pos_x, pos_y) in expanded:
+                continue
+            expanded.add((pos_x, pos_y))
+            # if we find a food at this location then exit
+            if food[pos_x][pos_y]:
+                return dist
+            # otherwise spread out from the location to its neighbours
+            nbrs = Actions.getLegalNeighbors((pos_x, pos_y), walls)
+            for nbr_x, nbr_y in nbrs:
+                fringe.append((nbr_x, nbr_y, dist+1))
+        # no food found
+        return None
+
+    def getSuccessor(self, gameState, action):
+		successor = gameState.generateSuccessor(self.index, action)
+		pos = successor.getAgentState(self.index).getPosition()
+		if pos != nearestPoint(pos):
+			# Only half a grid position was covered
+			return successor.generateSuccessor(self.index, action)
+		else:
+			return successor
+
+    def updateWeights(self, gameState, action):
+        features = self.getFeatures(gameState, action)
+        nextState = self.getSuccessor(gameState, action)
+
+        # Calculate the reward. NEEDS WORK
+        reward = nextState.getScore() - gameState.getScore()
+
+        for feature in features:
+            temporalDistance = (reward + self.discountRate * self.getValue(nextState)) - self.getQValue(gameState, action)
+            self.weights[feature] = self.weights[feature] + self.alpha * temporalDistance * features[feature]
+
+    def final(self, gameState):
+        with open('weights.pkl', 'w') as f:
+            pickle.dump(self.weights, f)
+
+
+class DefensiveAgent(BaseAgent):
+
+    def registerInitialState(self, gameState):
+        """
+        This method handles the initial setup of the
+        agent to populate useful fields (such as what team
+        we're on).
+        """
+
+        BaseAgent.registerInitialState(self, gameState)
+        self.myAgents = CaptureAgent.getTeam(self, gameState)
+        self.opAgents = CaptureAgent.getOpponents(self, gameState)
+        self.myFoods = CaptureAgent.getFood(self, gameState).asList()
+        self.opFoods = CaptureAgent.getFoodYouAreDefending(self, gameState).asList()
+
+    def getWeights(self, gameState, action):
+        return {'numInvaders': -1000, 'onDefense': 100, 'invaderDistance': -10, 'stop': -100, 'reverse': -2}
+
+    def evaluate(self, gameState):
+        agentPos = gameState.getAgentPosition(self.index)
+        actions = gameState.getLegalActions(self.index)
+
+        # Distances between agent and foods
+        distToFood = []
+        for food in self.myFoods:
+            distToFood.append(self.distancer.getDistance(agentPos, food))
+
+        # Distances between agent and opponents
+        distToOps = []
+        for opponent in self.opAgents:
+            opPos = gameState.getAgentPosition(opponent)
+            if opPos != None:
+                distToOps.append(self.distancer.getDistance(agentPos, opPos))
+
+        # Get the best action based on values
+        values = [self.getPolicy(gameState, a) for a in actions]
+        maxValue = max(values)
+        return maxValue
+        bestActions = [a for a, v in zip(actions, values) if v == maxValue]
+        return random.choice(bestActions)
+
+    def getPolicy(self, gameState, action):
+        features = self.getFeatures(gameState, action)
+        weights = self.getWeights(gameState, action)
+        return features * weights
+
+    def getFeatures(self, gameState, action):
+        features = util.Counter()
+        successor = self.getSuccessor(gameState, action)
+
+        myState = successor.getAgentState(self.index)
+        myPos = myState.getPosition()
+
+        # Computes whether we're on defense (1) or offense (0)
+        features['onDefense'] = 1
+        if myState.isPacman: features['onDefense'] = 0
+
+        # Computes distance to invaders we can see
+        enemies = [successor.getAgentState(i) for i in self.getOpponents(successor)]
+        invaders = [a for a in enemies if a.isPacman and a.getPosition() != None]
+        features['numInvaders'] = len(invaders)
+        if len(invaders) > 0:
+            dists = [self.getMazeDistance(myPos, a.getPosition()) for a in invaders]
+            features['invaderDistance'] = min(dists)
+
+        if action == Directions.STOP:
+            features['stop'] = 1
+        rev = Directions.REVERSE[gameState.getAgentState(self.index).configuration.direction]
+        if action == rev:
+            features['reverse'] = 1
+
+        return features
+
+    def getSuccessor(self, gameState, action):
+        successor = gameState.generateSuccessor(self.index, action)
+        pos = successor.getAgentState(self.index).getPosition()
+        if pos != nearestPoint(pos):
+            # Only half a grid position was covered
+            return successor.generateSuccessor(self.index, action)
+        else:
+            return successor

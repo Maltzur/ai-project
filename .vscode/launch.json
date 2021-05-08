@@ -1,0 +1,35 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Pacman CTF - Baseline",
+            "type": "python",
+            "request": "launch",
+            "program": "capture.py",
+            "console": "integratedTerminal",
+            "args": ["-r", "myTeam", "-b", "baselineTeam"],
+            "env": {"DISPLAY": ":1"}
+        },
+        {
+            "name": "Pacman CTF - Team 1",
+            "type": "python",
+            "request": "launch",
+            "program": "capture.py",
+            "console": "integratedTerminal",
+            "args": ["-r", "myTeam", "-b", "myTeam1"],
+            "env": {"DISPLAY": ":1"}
+        },
+        {
+            "name": "Pacman CTF - Team 2",
+            "type": "python",
+            "request": "launch",
+            "program": "capture.py",
+            "console": "integratedTerminal",
+            "args": ["-r", "myTeam", "-b", "myTeam2"],
+            "env": {"DISPLAY": ":1"}
+        }
+    ]
+}

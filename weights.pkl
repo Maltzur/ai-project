@@ -1,0 +1,17 @@
+(dp0
+S'closest-food'
+p1
+F-1.4768841137872728
+sS'bias'
+p2
+F21.63067284371618
+sS'successorScore'
+p3
+F-59.80756226377137
+sS'closest-ghost'
+p4
+F8.660575413557586
+sS'eats-food'
+p5
+F24.573832614225207
+s.
